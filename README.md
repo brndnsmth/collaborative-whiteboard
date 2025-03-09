@@ -1,10 +1,18 @@
 # Collaborative Whiteboard App
 
-A fairly basic real-time collaborative whiteboard application. Users can draw, annotate, and chat with each other in real time. Each user is assigned a random goofy name upon joining, and all changes to the canvas are synchronized across all connected users.
+A fairly basic real-time collaborative whiteboard application. Users can draw, annotate, and chat with each other in real time. Each user is assigned a random name upon joining, and all changes to the canvas are synchronized across all connected users.
 
 ---
 
-## Features
+## Technologies and Features
+
+### Backend
+- **FastAPI**: For handling WebSocket connections and managing the server.
+- **WebSockets**: For real-time communication between the server and clients.
+
+### Frontend
+- **HTML5 Canvas**: For drawing and rendering the whiteboard.
+- **JavaScript**: For handling user interactions, drawing logic, and WebSocket communication.
 
 ### Core Features
 - **Real-time Drawing Synchronization**: All users see updates to the canvas in real time.
@@ -17,18 +25,6 @@ A fairly basic real-time collaborative whiteboard application. Users can draw, a
   - Adjustable brush size
   - Clear canvas button to reset the canvas
 - **Chat Functionality**: Users can send messages to each other in real time.
-
----
-
-## Technologies Used
-
-### Backend
-- **FastAPI**: For handling WebSocket connections and managing the server.
-- **WebSockets**: For real-time communication between the server and clients.
-
-### Frontend
-- **HTML5 Canvas**: For drawing and rendering the whiteboard.
-- **JavaScript**: For handling user interactions, drawing logic, and WebSocket communication.
 
 ---
 
