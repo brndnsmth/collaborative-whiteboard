@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Collaborative Whiteboard</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        height: 100vh;
+      }
+
+      #sidebar {
+        width: 250px;
+        background-color: #f5f5f5;
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+      }
+
+      #main-content {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+      }
+
+      #canvas-container {
+        flex: 1;
+        position: relative;
+        overflow: hidden;
+      }
+
+      #whiteboard {
+        position: absolute;
+        top: 0;
+        left: 0;
+        cursor: crosshair;
+        background-color: white;
+        border: 1px solid #ddd;
+      }
+
+      #toolbar {
+        padding: 10px;
+        background-color: #eee;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .tool-btn {
+        padding: 8px 12px;
+        background-color: #fff;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+
+      .tool-btn.active {
+        background-color: #007bff;
+        color: white;
+      }
+
+      #color-picker {
+        width: 30px;
+        height: 30px;
+        border: none;
+        padding: 0;
+        cursor: pointer;
+      }
+
+      #size-slider {
+        width: 100px;
+      }
+
+      #users-list {
+        margin-top: 20px;
+      }
+
+      #users-list h3 {
+        margin-top: 0;
+      }
+
+      #chat-container {
+        height: 200px;
+        display: flex;
+        flex-direction: column;
+        margin-top: 20px;
+      }
+
+      #chat-messages {
+        flex: 1;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        padding: 10px;
+        background-color: white;
+        margin-bottom: 10px;
+      }
+
+      #chat-form {
+        display: flex;
+      }
+
+      #chat-input {
+        flex: 1;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+      }
+
+      #chat-submit {
+        padding: 8px 12px;
+        background-color: #007bff;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        margin-left: 5px;
+        cursor: pointer;
+      }
+
+      .user-item {
+        padding: 5px;
+        margin: 5px 0;
+        background-color: #e9e9e9;
+        border-radius: 4px;
+      }
+
+      .chat-message {
+        margin-bottom: 8px;
+        padding: 5px;
+        border-radius: 4px;
+      }
+
+      .chat-message .username {
+        font-weight: bold;
+        margin-right: 5px;
+      }
+
+      .system-message {
+        color: #666;
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="sidebar">
+      <h2>Whiteboard App</h2>
+      <div id="user-info">
+        <p>You are: <span id="my-username">Connecting...</span></p>
+      </div>
+
+      <div id="users-list">
+        <h3>Online Users</h3>
+        <div id="users-container"></div>
+      </div>
+
+      <div id="chat-container">
+        <h3>Chat</h3>
+        <div id="chat-messages"></div>
+        <form id="chat-form">
+          <input type="text" id="chat-input" placeholder="Type a message..." />
+          <button type="submit" id="chat-submit">Send</button>
+        </form>
+      </div>
+    </div>
+
+    <div id="main-content">
+      <div id="toolbar">
+        <button class="tool-btn active" data-tool="pen">Pen</button>
+        <button class="tool-btn" data-tool="line">Line</button>
+        <button class="tool-btn" data-tool="rectangle">Rectangle</button>
+        <button class="tool-btn" data-tool="circle">Circle</button>
+        <button class="tool-btn" data-tool="eraser">Eraser</button>
+        <input type="color" id="color-picker" value="#000000" />
+        <label for="size-slider">Size:</label>
+        <input type="range" id="size-slider" min="1" max="50" value="5" />
+        <span id="size-value">5px</span>
+        <button id="clear-btn" class="tool-btn">Clear Canvas</button>
+      </div>
+
+      <div id="canvas-container">
+        <canvas id="whiteboard"></canvas>
+      </div>
+    </div>
+
+    <script>
+      // Generate a unique client ID
+      const clientId = "user_" + Math.random().toString(36).substr(2, 9);
+      let myUsername = "";
+
+      // Canvas setup
+      const canvas = document.getElementById("whiteboard");
+      const ctx = canvas.getContext("2d");
+      let isDrawing = false;
+      let lastX = 0;
+      let lastY = 0;
+
+      // Tool settings
+      let currentTool = "pen";
+      let currentColor = "#000000";
+      let currentSize = 5;
+      let startX, startY;
+
+      // Temporary canvas for shape preview
+      const tempCanvas = document.createElement("canvas");
+      const tempCtx = tempCanvas.getContext("2d");
+
+      // Local copy of canvas state
+      let canvasState = [];
+
+      // Resize canvas to fit container
+      function resizeCanvas() {
+        const container = document.getElementById("canvas-container");
+        canvas.width = container.clientWidth;
+        canvas.height = container.clientHeight;
+        tempCanvas.width = canvas.width;
+        tempCanvas.height = canvas.height;
+      }
+
+      // Initialize WebSocket connection
+      const ws = new WebSocket(`ws://${window.location.host}/ws/${clientId}`);
+
+      ws.onopen = function () {
+        console.log("Connected to the server");
+        addSystemMessage("Connected to the whiteboard");
+      };
+
+      ws.onmessage = function (event) {
+        const message = JSON.parse(event.data);
+
+        switch (message.type) {
+          case "draw":
+            drawFromData(message.data);
+            break;
+
+          case "clear":
+            clearCanvas();
+            break;
+
+          case "canvas_state":
+            // Load the entire canvas state
+            clearCanvas();
+            canvasState = message.data; // Update local state
+            canvasState.forEach((item) => drawFromData(item));
+            break;
+
+          case "user_joined":
+            addSystemMessage(`${message.user_name} joined the whiteboard`);
+            break;
+
+          case "user_left":
+            addSystemMessage(`${message.user_name} left the whiteboard`);
+            break;
+
+          case "user_list":
+            updateUsersList(message.users);
+            break;
+
+          case "chat":
+            addChatMessage(message.user_name, message.text);
+            break;
+        }
+      };
+
+      ws.onclose = function () {
+        addSystemMessage("Disconnected from the server");
+      };
+
+      // Draw on canvas based on received data
+      function drawFromData(data) {
+        // Add to local canvas state
+        canvasState.push(data);
+
+        // Draw the actual data
+        switch (data.tool) {
+          case "pen":
+            ctx.globalCompositeOperation = "source-over";
+            ctx.strokeStyle = data.color;
+            ctx.lineWidth = data.size;
+            ctx.lineCap = "round";
+            ctx.lineJoin = "round";
+
+            ctx.beginPath();
+            ctx.moveTo(data.fromX, data.fromY);
+            ctx.lineTo(data.toX, data.toY);
+            ctx.stroke();
+            break;
+
+          case "eraser":
+            ctx.globalCompositeOperation = "destination-out";
+            ctx.lineWidth = data.size;
+            ctx.lineCap = "round";
+            ctx.lineJoin = "round";
+
+            ctx.beginPath();
+            ctx.moveTo(data.fromX, data.fromY);
+            ctx.lineTo(data.toX, data.toY);
+            ctx.stroke();
+            ctx.globalCompositeOperation = "source-over";
+            break;
+
+          case "line":
+            ctx.globalCompositeOperation = "source-over";
+            ctx.strokeStyle = data.color;
+            ctx.lineWidth = data.size;
+            ctx.beginPath();
+            ctx.moveTo(data.startX, data.startY);
+            ctx.lineTo(data.endX, data.endY);
+            ctx.stroke();
+            break;
+
+          case "rectangle":
+            ctx.globalCompositeOperation = "source-over";
+            ctx.strokeStyle = data.color;
+            ctx.lineWidth = data.size;
+            ctx.beginPath();
+            ctx.rect(
+              data.startX,
+              data.startY,
+              data.endX - data.startX,
+              data.endY - data.startY
+            );
+            ctx.stroke();
+            break;
+
+          case "circle":
+            ctx.globalCompositeOperation = "source-over";
+            ctx.strokeStyle = data.color;
+            ctx.lineWidth = data.size;
+            ctx.beginPath();
+            const radiusX = Math.abs(data.endX - data.startX) / 2;
+            const radiusY = Math.abs(data.endY - data.startY) / 2;
+            const centerX = Math.min(data.startX, data.endX) + radiusX;
+            const centerY = Math.min(data.startY, data.endY) + radiusY;
+
+            ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, 2 * Math.PI);
+            ctx.stroke();
+            break;
+        }
+      }
+
+      // Clear the canvas
+      function clearCanvas() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        canvasState = [];
+      }
+
+      // Update the users list in the sidebar
+      function updateUsersList(users) {
+        const usersContainer = document.getElementById("users-container");
+        usersContainer.innerHTML = "";
+
+        users.forEach((user) => {
+          const userElement = document.createElement("div");
+          userElement.className = "user-item";
+          userElement.textContent = user.name;
+
+          if (user.id === clientId) {
+            userElement.textContent += " (You)";
+            myUsername = user.name;
+            document.getElementById("my-username").textContent = myUsername;
+          }
+
+          usersContainer.appendChild(userElement);
+        });
+      }
+
+      // Add a system message to the chat
+      function addSystemMessage(text) {
+        const messagesContainer = document.getElementById("chat-messages");
+        const messageElement = document.createElement("div");
+        messageElement.className = "chat-message system-message";
+        messageElement.textContent = text;
+        messagesContainer.appendChild(messageElement);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      }
+
+      // Add a chat message
+      function addChatMessage(username, text) {
+        const messagesContainer = document.getElementById("chat-messages");
+        const messageElement = document.createElement("div");
+        messageElement.className = "chat-message";
+
+        const usernameSpan = document.createElement("span");
+        usernameSpan.className = "username";
+        usernameSpan.textContent = username + ":";
+
+        messageElement.appendChild(usernameSpan);
+        messageElement.appendChild(document.createTextNode(" " + text));
+
+        messagesContainer.appendChild(messageElement);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      }
+
+      // Send drawing data to the server
+      function sendDrawingData(data) {
+        const message = {
+          type: "draw",
+          data: data,
+        };
+        ws.send(JSON.stringify(message));
+      }
+
+      // Event listeners for canvas drawing
+      canvas.addEventListener("mousedown", startDrawing);
+      canvas.addEventListener("mousemove", draw);
+      canvas.addEventListener("mouseup", stopDrawing);
+      canvas.addEventListener("mouseout", stopDrawing);
+
+      // Touch support
+      canvas.addEventListener("touchstart", handleTouchStart);
+      canvas.addEventListener("touchmove", handleTouchMove);
+      canvas.addEventListener("touchend", handleTouchEnd);
+
+      function handleTouchStart(e) {
+        e.preventDefault();
+        const touch = e.touches[0];
+        const mouseEvent = new MouseEvent("mousedown", {
+          clientX: touch.clientX,
+          clientY: touch.clientY,
+        });
+        canvas.dispatchEvent(mouseEvent);
+      }
+
+      function handleTouchMove(e) {
+        e.preventDefault();
+        const touch = e.touches[0];
+        const mouseEvent = new MouseEvent("mousemove", {
+          clientX: touch.clientX,
+          clientY: touch.clientY,
+        });
+        canvas.dispatchEvent(mouseEvent);
+      }
+
+      function handleTouchEnd(e) {
+        e.preventDefault();
+        const mouseEvent = new MouseEvent("mouseup", {});
+        canvas.dispatchEvent(mouseEvent);
+      }
+
+      function startDrawing(e) {
+        isDrawing = true;
+
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        if (currentTool === "pen" || currentTool === "eraser") {
+          lastX = x;
+          lastY = y;
+        } else {
+          // For shapes, store the starting point
+          startX = x;
+          startY = y;
+          // Clear the temp canvas
+          tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
+        }
+      }
+
+      function draw(e) {
+        if (!isDrawing) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        if (currentTool === "pen" || currentTool === "eraser") {
+          // For pen and eraser, draw directly and send data
+          const data = {
+            tool: currentTool,
+            fromX: lastX,
+            fromY: lastY,
+            toX: x,
+            toY: y,
+            color: currentColor,
+            size: currentSize,
+          };
+
+          drawFromData(data);
+          sendDrawingData(data);
+
+          lastX = x;
+          lastY = y;
+        } else {
+          // For shapes, preview on temp canvas
+          tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
+
+          // Draw the current canvas state onto the temp canvas
+          canvasState.forEach((item) => drawOnContext(tempCtx, item));
+
+          // Then draw the shape preview
+          tempCtx.strokeStyle = currentColor;
+          tempCtx.lineWidth = currentSize;
+
+          switch (currentTool) {
+            case "line":
+              tempCtx.beginPath();
+              tempCtx.moveTo(startX, startY);
+              tempCtx.lineTo(x, y);
+              tempCtx.stroke();
+              break;
+
+            case "rectangle":
+              tempCtx.beginPath();
+              tempCtx.rect(startX, startY, x - startX, y - startY);
+              tempCtx.stroke();
+              break;
+
+            case "circle":
+              tempCtx.beginPath();
+              const radiusX = Math.abs(x - startX) / 2;
+              const radiusY = Math.abs(y - startY) / 2;
+              const centerX = Math.min(startX, x) + radiusX;
+              const centerY = Math.min(startY, y) + radiusY;
+
+              tempCtx.ellipse(
+                centerX,
+                centerY,
+                radiusX,
+                radiusY,
+                0,
+                0,
+                2 * Math.PI
+              );
+              tempCtx.stroke();
+              break;
+          }
+
+          // Display the temp canvas on the main canvas
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(tempCanvas, 0, 0);
+        }
+      }
+
+      function stopDrawing(e) {
+        if (!isDrawing) return;
+
+        if (currentTool !== "pen" && currentTool !== "eraser") {
+          // For shapes, finalize the shape and send the data
+          const rect = canvas.getBoundingClientRect();
+          const x = e.clientX - rect.left;
+          const y = e.clientY - rect.top;
+
+          const data = {
+            tool: currentTool,
+            startX: startX,
+            startY: startY,
+            endX: x,
+            endY: y,
+            color: currentColor,
+            size: currentSize,
+          };
+
+          // Add the finalized shape to the canvas state
+          drawFromData(data);
+          sendDrawingData(data);
+        }
+
+        // Clear the temp canvas
+        tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
+
+        // Redraw the main canvas from the canvas state
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        canvasState.forEach((item) => drawOnContext(ctx, item));
+
+        isDrawing = false;
+      }
+
+      // Helper function to draw on a given context (ctx or tempCtx)
+      function drawOnContext(context, data) {
+        switch (data.tool) {
+          case "pen":
+            context.globalCompositeOperation = "source-over";
+            context.strokeStyle = data.color;
+            context.lineWidth = data.size;
+            context.lineCap = "round";
+            context.lineJoin = "round";
+
+            context.beginPath();
+            context.moveTo(data.fromX, data.fromY);
+            context.lineTo(data.toX, data.toY);
+            context.stroke();
+            break;
+
+          case "eraser":
+            context.globalCompositeOperation = "destination-out";
+            context.lineWidth = data.size;
+            context.lineCap = "round";
+            context.lineJoin = "round";
+
+            context.beginPath();
+            context.moveTo(data.fromX, data.fromY);
+            context.lineTo(data.toX, data.toY);
+            context.stroke();
+            context.globalCompositeOperation = "source-over";
+            break;
+
+          case "line":
+            context.globalCompositeOperation = "source-over";
+            context.strokeStyle = data.color;
+            context.lineWidth = data.size;
+            context.beginPath();
+            context.moveTo(data.startX, data.startY);
+            context.lineTo(data.endX, data.endY);
+            context.stroke();
+            break;
+
+          case "rectangle":
+            context.globalCompositeOperation = "source-over";
+            context.strokeStyle = data.color;
+            context.lineWidth = data.size;
+            context.beginPath();
+            context.rect(
+              data.startX,
+              data.startY,
+              data.endX - data.startX,
+              data.endY - data.startY
+            );
+            context.stroke();
+            break;
+
+          case "circle":
+            context.globalCompositeOperation = "source-over";
+            context.strokeStyle = data.color;
+            context.lineWidth = data.size;
+            context.beginPath();
+            const radiusX = Math.abs(data.endX - data.startX) / 2;
+            const radiusY = Math.abs(data.endY - data.startY) / 2;
+            const centerX = Math.min(data.startX, data.endX) + radiusX;
+            const centerY = Math.min(data.startY, data.endY) + radiusY;
+
+            context.ellipse(
+              centerX,
+              centerY,
+              radiusX,
+              radiusY,
+              0,
+              0,
+              2 * Math.PI
+            );
+            context.stroke();
+            break;
+        }
+      }
+
+      // Tool selection
+      const toolButtons = document.querySelectorAll(".tool-btn[data-tool]");
+      toolButtons.forEach((button) => {
+        button.addEventListener("click", function () {
+          toolButtons.forEach((btn) => btn.classList.remove("active"));
+          this.classList.add("active");
+          currentTool = this.getAttribute("data-tool");
+        });
+      });
+
+      // Color picker
+      const colorPicker = document.getElementById("color-picker");
+      colorPicker.addEventListener("input", function () {
+        currentColor = this.value;
+      });
+
+      // Size slider
+      const sizeSlider = document.getElementById("size-slider");
+      const sizeValue = document.getElementById("size-value");
+      sizeSlider.addEventListener("input", function () {
+        currentSize = this.value;
+        sizeValue.textContent = this.value + "px";
+      });
+
+      // Clear button
+      const clearButton = document.getElementById("clear-btn");
+      clearButton.addEventListener("click", function () {
+        clearCanvas();
+        const message = {
+          type: "clear",
+        };
+        ws.send(JSON.stringify(message));
+      });
+
+      // Chat form
+      const chatForm = document.getElementById("chat-form");
+      const chatInput = document.getElementById("chat-input");
+
+      chatForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        const text = chatInput.value.trim();
+        if (text) {
+          const message = {
+            type: "chat",
+            text: text,
+          };
+          ws.send(JSON.stringify(message));
+          chatInput.value = "";
+        }
+      });
+
+      // Initialize
+      window.addEventListener("resize", resizeCanvas);
+      resizeCanvas();
+    </script>
+  </body>
+</html>
